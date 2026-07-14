@@ -18,6 +18,10 @@ return [
         'token' => env('POSTMARK_TOKEN'),
     ],
 
+    'google_places' => [
+        'key' => env('GOOGLE_PLACES_API_KEY'),
+    ],
+
     'resend' => [
         'key' => env('RESEND_KEY'),
     ],
