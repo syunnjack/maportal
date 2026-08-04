@@ -39,9 +39,12 @@ return [
         ],
     ],
 
-
     'ga4' => [
         'id' => env('GA4_MEASUREMENT_ID'),
+    ],
+
+    'google_search_console' => [
+        'verification' => env('GOOGLE_SITE_VERIFICATION'),
     ],
 
 ];

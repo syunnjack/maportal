@@ -8,6 +8,10 @@
     <meta name="description" content="@yield('description', '全国のマッサージ・整体・リラクゼーション店を都道府県から検索できるポータルサイトです。Googleマップの店舗情報に加えて、利用者のリアルな口コミも確認できます。')">
     <link rel="canonical" href="{{ url()->current() }}">
 
+    @if(config('services.google_search_console.verification'))
+    <meta name="google-site-verification" content="{{ config('services.google_search_console.verification') }}">
+    @endif
+
     <meta property="og:site_name" content="マッサージ口コミポータル">
     <meta property="og:type" content="website">
     <meta property="og:title" content="@yield('title', 'マッサージ口コミポータル | 都道府県からマッサージ・リラクゼーション店を探す')">
