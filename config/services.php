@@ -22,6 +22,8 @@ return [
         'key' => env('GOOGLE_PLACES_API_KEY'),
     ],
 
+    'google_site_verification' => env('GOOGLE_SITE_VERIFICATION'),
+
     'resend' => [
         'key' => env('RESEND_KEY'),
     ],

@@ -19,6 +19,10 @@
     <meta name="twitter:title" content="@yield('title', 'マッサージ口コミポータル | 都道府県からマッサージ・リラクゼーション店を探す')">
     <meta name="twitter:description" content="@yield('description', '全国のマッサージ・整体・リラクゼーション店を都道府県から検索できるポータルサイトです。Googleマップの店舗情報に加えて、利用者のリアルな口コミも確認できます。')">
 
+    @if(config('services.google_site_verification'))
+    <meta name="google-site-verification" content="{{ config('services.google_site_verification') }}">
+    @endif
+
     <link rel="icon" href="/favicon.ico" sizes="any">
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">

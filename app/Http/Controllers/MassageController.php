@@ -40,7 +40,8 @@ class MassageController extends Controller
         }
 
         $results = Cache::remember("massage-search:{$prefecture}", now()->addHour(), function () use ($prefecture) {
-            $apiKey = env('GOOGLE_PLACES_API_KEY');
+            // config:cache 後は env() が常に null を返すため、必ず config() から読む。
+            $apiKey = config('services.google_places.key');
             if (blank($apiKey)) {
                 return [];
             }
