@@ -39,7 +39,10 @@ class MassageController extends Controller
             return redirect()->route('massage.index');
         }
 
-        $results = Cache::remember("massage-search:{$prefecture}", now()->addHour(), function () use ($prefecture) {
+        // このフィールドマスクはPlaces APIのEnterprise SKUに該当し、無料枠は月1,000回しかない。
+        // 1時間キャッシュだと47都道府県×24時間で月34,000回に達しうる（クローラーの巡回だけでも
+        // キャッシュミスは起きる）。店舗情報は7日で古くなるものではないので、長めに保持する。
+        $results = Cache::remember("massage-search:{$prefecture}", now()->addDays(7), function () use ($prefecture) {
             // config:cache 後は env() が常に null を返すため、必ず config() から読む。
             $apiKey = config('services.google_places.key');
             if (blank($apiKey)) {
