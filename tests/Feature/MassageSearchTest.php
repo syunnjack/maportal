@@ -10,11 +10,12 @@ class MassageSearchTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_index_lists_all_47_prefectures(): void
+    public function test_index_lists_nationwide_and_prefectures(): void
     {
         $response = $this->get('/');
 
         $response->assertStatus(200);
+        $response->assertSee('全国');
         $response->assertSee('北海道');
         $response->assertSee('沖縄県');
     }
@@ -47,6 +48,7 @@ class MassageSearchTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSee('テストマッサージ東京店');
+        Http::assertSentCount(3);
     }
 
     public function test_search_excludes_places_from_other_prefectures(): void
@@ -107,5 +109,36 @@ class MassageSearchTest extends TestCase
         $response->assertStatus(200);
         $response->assertSee('女性専用サロン');
         $response->assertDontSee('ふつうの店');
+    }
+
+    public function test_nationwide_search_aggregates_across_prefectures(): void
+    {
+        Http::fake(function ($request) {
+            $query = $request['textQuery'] ?? '';
+
+            if (str_contains($query, '東京都')) {
+                return Http::response([
+                    'places' => [
+                        ['id' => 'tokyo-1', 'displayName' => ['text' => '東京店A'], 'formattedAddress' => '東京都千代田区1-1-1'],
+                    ],
+                ], 200);
+            }
+
+            if (str_contains($query, '大阪府')) {
+                return Http::response([
+                    'places' => [
+                        ['id' => 'osaka-1', 'displayName' => ['text' => '大阪店A'], 'formattedAddress' => '大阪府大阪市1-1-1'],
+                    ],
+                ], 200);
+            }
+
+            return Http::response(['places' => []], 200);
+        });
+
+        $response = $this->get('/search?prefecture=' . urlencode('全国'));
+
+        $response->assertStatus(200);
+        $response->assertSee('東京店A');
+        $response->assertSee('大阪店A');
     }
 }

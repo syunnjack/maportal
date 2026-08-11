@@ -21,6 +21,7 @@ class SitemapController extends Controller
     {
         $urls = collect([
             ['loc' => route('massage.index'), 'priority' => '1.0'],
+            ['loc' => route('massage.search', ['prefecture' => '全国']), 'priority' => '0.9'],
             ['loc' => route('about'), 'priority' => '0.3'],
         ])->merge(
             collect(self::PREFECTURES)->map(fn ($pref) => [

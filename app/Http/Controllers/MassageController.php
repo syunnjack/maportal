@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Http;
 
 class MassageController extends Controller
 {
+    private const NATIONWIDE = '全国';
+
     private const PREFECTURES = [
         '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県',
         '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
@@ -26,9 +28,17 @@ class MassageController extends Controller
         . 'places.rating,places.userRatingCount,places.photos,places.googleMapsUri,'
         . 'places.nationalPhoneNumber,places.websiteUri';
 
+    private const SEARCH_KEYWORDS = ['マッサージ', '整体', 'リラクゼーション'];
+
+    private const MAX_RESULTS_PER_PREFECTURE = 60;
+
+    private const MAX_RESULTS_NATIONWIDE = 600;
+
     public function index()
     {
-        return view('massage.index', ['prefectures' => self::PREFECTURES]);
+        return view('massage.index', [
+            'prefectures' => array_merge([self::NATIONWIDE], self::PREFECTURES),
+        ]);
     }
 
     public function search(Request $request)
@@ -39,40 +49,24 @@ class MassageController extends Controller
             return redirect()->route('massage.index');
         }
 
-        // このフィールドマスクはPlaces APIのEnterprise SKUに該当し、無料枠は月1,000回しかない。
-        // 1時間キャッシュだと47都道府県×24時間で月34,000回に達しうる（クローラーの巡回だけでも
-        // キャッシュミスは起きる）。店舗情報は7日で古くなるものではないので、長めに保持する。
-        $results = Cache::remember("massage-search:{$prefecture}", now()->addDays(7), function () use ($prefecture) {
-            // config:cache 後は env() が常に null を返すため、必ず config() から読む。
-            $apiKey = config('services.google_places.key');
-            if (blank($apiKey)) {
-                return [];
-            }
+        if (!in_array($prefecture, array_merge([self::NATIONWIDE], self::PREFECTURES), true)) {
+            return redirect()->route('massage.index');
+        }
 
-            try {
-                $response = Http::timeout(5)
-                    ->withHeaders([
-                        'Content-Type' => 'application/json',
-                        'X-Goog-Api-Key' => $apiKey,
-                        'X-Goog-FieldMask' => self::FIELD_MASK,
-                    ])
-                    ->post('https://places.googleapis.com/v1/places:searchText', [
-                        'textQuery' => $prefecture . ' マッサージ',
-                        'languageCode' => 'ja',
-                        'regionCode' => 'JP',
-                    ]);
-            } catch (ConnectionException) {
-                return [];
-            }
-
-            return $response->successful() ? ($response->json('places') ?? []) : [];
-        });
-
-        // textQueryはあいまい一致のため、選択された都道府県以外の
-        // 店舗も混ざる。住所に都道府県名が含まれるかで厳密に絞り込む。
-        $results = array_values(array_filter($results, function ($place) use ($prefecture) {
-            return str_contains($place['formattedAddress'] ?? '', $prefecture);
-        }));
+        if ($prefecture === self::NATIONWIDE) {
+            $results = collect(self::PREFECTURES)
+                ->flatMap(fn (string $pref) => $this->fetchPlacesByPrefecture($pref))
+                ->unique(fn (array $place) => $place['id'] ?? null)
+                ->sortByDesc(fn (array $place) => [
+                    $place['userRatingCount'] ?? 0,
+                    $place['rating'] ?? 0,
+                ])
+                ->take(self::MAX_RESULTS_NATIONWIDE)
+                ->values()
+                ->all();
+        } else {
+            $results = $this->fetchPlacesByPrefecture($prefecture);
+        }
 
         $tagsByPlaceId = [];
         $availableTags = [];
@@ -107,6 +101,58 @@ class MassageController extends Controller
         return view('massage.results', compact(
             'results', 'prefecture', 'reviews', 'tagsByPlaceId', 'availableTags', 'tag', 'faq'
         ));
+    }
+
+    private function fetchPlacesByPrefecture(string $prefecture): array
+    {
+        // このフィールドマスクはPlaces APIのEnterprise SKUに該当し、無料枠は月1,000回しかない。
+        // 1時間キャッシュだと47都道府県×24時間で月34,000回に達しうる（クローラーの巡回だけでも
+        // キャッシュミスは起きる）。店舗情報は7日で古くなるものではないので、長めに保持する。
+        return Cache::remember("massage-search:{$prefecture}", now()->addDays(7), function () use ($prefecture) {
+            // config:cache 後は env() が常に null を返すため、必ず config() から読む。
+            $apiKey = config('services.google_places.key');
+            if (blank($apiKey)) {
+                return [];
+            }
+
+            $places = [];
+
+            foreach (self::SEARCH_KEYWORDS as $keyword) {
+                try {
+                    $response = Http::timeout(5)
+                        ->withHeaders([
+                            'Content-Type' => 'application/json',
+                            'X-Goog-Api-Key' => $apiKey,
+                            'X-Goog-FieldMask' => self::FIELD_MASK,
+                        ])
+                        ->post('https://places.googleapis.com/v1/places:searchText', [
+                            'textQuery' => $prefecture . ' ' . $keyword,
+                            'languageCode' => 'ja',
+                            'regionCode' => 'JP',
+                            'pageSize' => 20,
+                        ]);
+                } catch (ConnectionException) {
+                    continue;
+                }
+
+                if ($response->successful()) {
+                    $places = array_merge($places, $response->json('places') ?? []);
+                }
+            }
+
+            // textQueryはあいまい一致のため、選択された都道府県以外の
+            // 店舗も混ざる。住所に都道府県名が含まれるかで厳密に絞り込む。
+            return collect($places)
+                ->filter(fn (array $place) => str_contains($place['formattedAddress'] ?? '', $prefecture))
+                ->unique(fn (array $place) => $place['id'] ?? null)
+                ->sortByDesc(fn (array $place) => [
+                    $place['userRatingCount'] ?? 0,
+                    $place['rating'] ?? 0,
+                ])
+                ->take(self::MAX_RESULTS_PER_PREFECTURE)
+                ->values()
+                ->all();
+        });
     }
 
     private function buildFaq(string $prefecture, array $results, Collection $reviews, array $tagsByPlaceId): array
