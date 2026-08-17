@@ -1,4 +1,0 @@
-User-agent: *
-Disallow:
-
-Sitemap: https://maportal.example.com/sitemap.xml
