@@ -6,13 +6,19 @@
 
     <title>@yield('title', 'マッサージ口コミポータル | 都道府県からマッサージ・リラクゼーション店を探す')</title>
     <meta name="description" content="@yield('description', '全国のマッサージ・整体・リラクゼーション店を都道府県から検索できるポータルサイトです。Googleマップの店舗情報に加えて、利用者のリアルな口コミも確認できます。')">
-    <link rel="canonical" href="{{ url()->current() }}">
+    @php
+        // url()->current() はクエリを落とすため、47都道府県のページがすべて
+        // /search を正規URLとして申告してしまう。内容が変わる条件を残す。
+        $canonicalQuery = array_filter(request()->only(['prefecture']), fn ($value) => $value !== null && $value !== '');
+        $canonicalUrl = url()->current() . ($canonicalQuery ? '?' . http_build_query($canonicalQuery) : '');
+    @endphp
+    <link rel="canonical" href="{{ $canonicalUrl }}">
 
     <meta property="og:site_name" content="マッサージ口コミポータル">
     <meta property="og:type" content="website">
     <meta property="og:title" content="@yield('title', 'マッサージ口コミポータル | 都道府県からマッサージ・リラクゼーション店を探す')">
     <meta property="og:description" content="@yield('description', '全国のマッサージ・整体・リラクゼーション店を都道府県から検索できるポータルサイトです。Googleマップの店舗情報に加えて、利用者のリアルな口コミも確認できます。')">
-    <meta property="og:url" content="{{ url()->current() }}">
+    <meta property="og:url" content="{{ $canonicalUrl }}">
     <meta property="og:locale" content="ja_JP">
 
     <meta name="twitter:card" content="summary">

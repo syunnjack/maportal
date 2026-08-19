@@ -115,7 +115,7 @@
           </p>
         @endif
         @if($photoName)
-          <img src="https://places.googleapis.com/v1/{{ $photoName }}/media?maxWidthPx=300&key={{ config('services.google_places.key') }}"
+          <img src="{{ route('place-photo', ['photo' => $photoName]) }}"
                alt="{{ $place['displayName']['text'] ?? '' }}" width="200" loading="lazy">
         @endif
         <div class="mt-2 mb-2">
@@ -197,4 +197,9 @@
     @endif
   @endif
 </div>
+
+  <p class="text-muted small mt-4">
+    店名・住所・評価・写真は Google マップの情報です（Powered by Google）。
+    評価と件数はGoogle上の値で、当サイトの口コミとは別のものです。営業時間や料金は各店舗にご確認ください。
+  </p>
 @endsection
