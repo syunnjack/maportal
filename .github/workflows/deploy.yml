@@ -1,10 +1,30 @@
 name: Deploy to WPX
 
-# 注意: WPXはGitHub ActionsのランナーからのSSH接続を拒否する（接続直後に切断される）。
-# そのため自動デプロイは現状機能せず、デプロイはローカルからのrsync/scpで行っている。
-# 手動実行のみに限定し、pushで毎回失敗し続けないようにしている。
+# **WPX は GitHub Actions のランナーからの SSH を、鍵を出す前に切る。**
+#
+#     Identity added: (stdin) (deploy-key)
+#     Connection closed by <WPXのIP> port 10022
+#
+# 一方、**Xserver（別のデータセンター）からは通る**（2026-09-30 に実測）。
+#
+#     Permission denied (publickey)   ← 接続は成立している。鍵が無いだけ
+#
+# だから **Xserver を踏み台（ProxyJump）にする。** 接続元が Xserver の IP になるので、
+# WPX 側の制限に当たらない。鍵はどちらも Secrets から渡すだけで、
+# ランナーの外には出さない。
+#
+# 直前の作りは「ランナーから直接 rsync」で、2026-08-11 以降ずっと失敗していた。
+# そのあいだ本番は 2026-08-09 のコードのままで、サイトマップの47件すべてが
+# canonical で別ページを指し、46ページが「発見済み-未登録」になっていた。
+
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-wpx
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -30,32 +50,86 @@ jobs:
           npm ci
           npm run build
 
-      - name: Deploy files via rsync over SSH
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -avzr --delete --exclude=".git" --exclude=".github" --exclude="node_modules" --exclude="tests" --exclude=".env" --exclude="database/database.sqlite" --exclude="storage/app" --exclude="storage/logs" --exclude="storage/framework"
-          path: ./
-          remote_path: ${{ secrets.WPX_DEPLOY_PATH }}
-          remote_host: ${{ secrets.WPX_SSH_HOST }}
-          remote_port: '10022'
-          remote_user: ${{ secrets.WPX_SSH_USERNAME }}
-          remote_key: ${{ secrets.WPX_SSH_PRIVATE_KEY }}
+      # 踏み台（Xserver）と行き先（WPX）の鍵を両方置く。
+      # **どちらもランナーの中だけ。** ログにも成果物にも出さない。
+      - name: SSH の設定（Xserver を踏み台にする）
+        env:
+          JUMP_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          WPX_KEY: ${{ secrets.WPX_SSH_PRIVATE_KEY }}
+          JUMP_HOST: ${{ secrets.SSH_HOST }}
+          JUMP_USER: ${{ secrets.SSH_USERNAME }}
+          WPX_HOST: ${{ secrets.WPX_SSH_HOST }}
+          WPX_USER: ${{ secrets.WPX_SSH_USERNAME }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$JUMP_KEY" > ~/.ssh/jump && chmod 600 ~/.ssh/jump
+          printf '%s\n' "$WPX_KEY"  > ~/.ssh/wpx  && chmod 600 ~/.ssh/wpx
+          cat > ~/.ssh/config <<CONF
+          Host jumpbox
+            HostName $JUMP_HOST
+            User $JUMP_USER
+            Port 10022
+            IdentityFile ~/.ssh/jump
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
 
-      - name: Run migrations, cache config
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.WPX_SSH_HOST }}
-          port: 10022
-          username: ${{ secrets.WPX_SSH_USERNAME }}
-          key: ${{ secrets.WPX_SSH_PRIVATE_KEY }}
-          script: |
-            set -e
-            cd "${{ secrets.WPX_DEPLOY_PATH }}"
-            PHP=/usr/bin/php8.3
-            mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs storage/app
-            touch database/database.sqlite
-            chmod -R 775 storage database
-            $PHP artisan migrate --force
-            $PHP artisan config:cache
-            $PHP artisan route:cache
-            $PHP artisan view:cache
+          Host wpx
+            HostName $WPX_HOST
+            User $WPX_USER
+            Port 10022
+            IdentityFile ~/.ssh/wpx
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+            ProxyJump jumpbox
+          CONF
+          chmod 600 ~/.ssh/config
+
+      - name: 疎通を確かめる
+        run: |
+          echo "--- 踏み台 ---"
+          ssh -o BatchMode=yes jumpbox 'echo OK: $(hostname)'
+          echo "--- 踏み台ごしの WPX ---"
+          ssh -o BatchMode=yes wpx 'echo OK: $(pwd)'
+
+      - name: rsync（踏み台ごし）
+        env:
+          DEST: ${{ secrets.WPX_DEPLOY_PATH }}
+        run: |
+          rsync -avz --delete \
+            --exclude=".git" --exclude=".github" --exclude="node_modules" \
+            --exclude="tests" --exclude=".env" --exclude="database/database.sqlite" \
+            --exclude="storage/app" --exclude="storage/logs" --exclude="storage/framework" \
+            -e "ssh -o BatchMode=yes" \
+            ./ "wpx:$DEST/"
+
+      - name: マイグレーションとキャッシュ
+        env:
+          DEST: ${{ secrets.WPX_DEPLOY_PATH }}
+        run: |
+          # **DEST をリモート側へ渡す。** クォート付きヒアドキュメントは
+          # ローカルで展開されないので、環境変数として明示的に送る。
+          ssh -o BatchMode=yes wpx "DEST='$DEST' bash -s" <<'REMOTE'
+          set -e
+          cd "$DEST"
+          PHP=/usr/bin/php8.3
+          mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs storage/app
+          touch database/database.sqlite
+          chmod -R 775 storage database
+          $PHP artisan migrate --force
+          # **view:clear を先に。** 残っていると古いテンプレートが出続ける。
+          $PHP artisan view:clear
+          $PHP artisan config:cache
+          $PHP artisan route:cache
+          REMOTE
+        # DEST を渡すため
+        shell: bash
+
+      # **本番を実際に取得して確かめる。** コミットは「直した記録」であって
+      # 本番の状態ではない。ここまでやって初めて「届いた」と言える。
+      - name: 本番を確認する
+        run: |
+          echo "--- robots.txt ---"
+          curl -s https://massage-kuchikomi.jp/robots.txt | grep -i sitemap
+          echo "--- canonical（クエリが入っているか） ---"
+          curl -s "https://massage-kuchikomi.jp/search?prefecture=%E6%9D%B1%E4%BA%AC%E9%83%BD" \
+            | grep -o 'rel="canonical" href="[^"]*"' | head -1
